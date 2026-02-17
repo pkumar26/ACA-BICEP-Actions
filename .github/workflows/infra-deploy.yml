@@ -1,0 +1,110 @@
+# =============================================================================
+# Infrastructure Deployment Workflow
+# =============================================================================
+# Deploys ACA infrastructure (identity, role assignment, Log Analytics,
+# managed environment, container app) using Bicep.
+#
+# Triggers:
+#   - Push to infra/** on main branch (auto-deploys to dev)
+#   - Manual workflow_dispatch for any environment
+# =============================================================================
+
+name: 'Deploy ACA Infrastructure'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+        default: dev
+
+permissions:
+  id-token: write   # Required for OIDC federated authentication
+  contents: read
+
+jobs:
+  deploy:
+    name: 'Deploy to ${{ github.event.inputs.environment || ''dev'' }}'
+    runs-on: ubuntu-latest
+
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+
+    # Maps to a GitHub Environment for secrets, variables, and protection rules
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      # -----------------------------------------------------------------
+      # 1. Checkout
+      # -----------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------
+      # 2. Azure Login (OIDC / Workload Identity Federation)
+      # -----------------------------------------------------------------
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # -----------------------------------------------------------------
+      # 3. What-If (preview changes, non-blocking)
+      # -----------------------------------------------------------------
+      - name: Preview infrastructure changes (what-if)
+        uses: azure/arm-deploy@v2
+        with:
+          scope: resourcegroup
+          resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: infra/parameters.${{ env.ENVIRONMENT }}.bicepparam
+          deploymentMode: Incremental
+          additionalArguments: --what-if
+
+      # -----------------------------------------------------------------
+      # 4. Deploy
+      # -----------------------------------------------------------------
+      - name: Deploy infrastructure
+        id: deploy
+        uses: azure/arm-deploy@v2
+        with:
+          scope: resourcegroup
+          resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: infra/parameters.${{ env.ENVIRONMENT }}.bicepparam
+          deploymentMode: Incremental
+          deploymentName: 'aca-infra-${{ env.ENVIRONMENT }}-${{ github.run_number }}'
+          failOnStdErr: false
+
+      # -----------------------------------------------------------------
+      # 5. Output summary
+      # -----------------------------------------------------------------
+      - name: Deployment summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ env.ENVIRONMENT }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container App | ${{ steps.deploy.outputs.containerAppName }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FQDN | ${{ steps.deploy.outputs.containerAppFqdn }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Identity | ${{ steps.deploy.outputs.identityResourceId }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Managed Environment | ${{ steps.deploy.outputs.managedEnvironmentName }} |" >> $GITHUB_STEP_SUMMARY
+
+      # -----------------------------------------------------------------
+      # 6. Azure Logout
+      # -----------------------------------------------------------------
+      - name: Azure Logout
+        if: always()
+        run: az logout
