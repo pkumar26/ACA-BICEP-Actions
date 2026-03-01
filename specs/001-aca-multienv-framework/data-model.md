@@ -55,7 +55,7 @@ var acrName = last(split(acrResourceId, '/'))
 | `containerMemory` | `string` | No | `'1Gi'` | `container-app.bicep` | No change |
 | `minReplicas` | `int` | No | `0` | `container-app.bicep` | No change |
 | `maxReplicas` | `int` | No | `3` | `container-app.bicep` | No change |
-| `ingressExternal` | `bool` | No | `true` | `container-app.bicep` | No change |
+| `ingressExternal` | `bool` | No | `false` | `container-app.bicep` | **CHANGED** — default flipped to `false` per Constitution VII |
 
 ### Configuration Parameters
 
@@ -130,7 +130,7 @@ Each module is a Bicep file under `infra/modules/` with defined inputs (params) 
 |--------|------|-------------|
 | `workspaceId` | `string` | Resource ID of the workspace |
 | `customerId` | `string` | Workspace customer ID (for ACA binding) |
-| `primarySharedKey` | `string` | Shared key (for ACA log analytics config) |
+| `primarySharedKey` | `string` | Shared key (for ACA log analytics config). **Must use `@secure()` decorator in Bicep output.** |
 
 **Notes**:
 - SKU is hardcoded to `PerGB2018`.
@@ -150,7 +150,7 @@ Each module is a Bicep file under `infra/modules/` with defined inputs (params) 
 | `location` | `string` | Yes | Azure region |
 | `tags` | `object` | Yes | Resource tags |
 | `logAnalyticsCustomerId` | `string` | Yes | LAW customer ID |
-| `logAnalyticsPrimarySharedKey` | `string` | Yes | LAW shared key (secure) |
+| `logAnalyticsPrimarySharedKey` | `string` | Yes | LAW shared key. **Must use `@secure()` decorator in Bicep param.** |
 | `subnetId` | `string` | No | Subnet resource ID for VNET integration |
 
 **Outputs**:
@@ -248,6 +248,10 @@ The orchestrator calls modules in dependency order and resolves conditional outp
 │            container-app +  │
 │            identity modules)│
 └─────────────────────────────┘
+
+> **Design Note — Log Analytics Always Created**: `log-analytics.bicep` runs unconditionally even when `existingManagedEnvironmentId` is provided. Rationale: the workspace serves as an independent log sink for custom KQL queries and diagnostics beyond the managed environment's built-in logging. This is intentional.
+
+> **Known Limitation — Sovereign Clouds**: The `acrLoginServer` derivation (`${acrName}.azurecr.io`) assumes Azure public cloud. Sovereign clouds use different suffixes (`.azurecr.cn` for China, `.azurecr.us` for US Gov). A future enhancement could derive the login server via a resource lookup (`reference(acrResourceId).loginServer`) instead of string concatenation.
 ```
 
 ---
@@ -371,7 +375,8 @@ The orchestrator calls modules in dependency order and resolves conditional outp
 | `maxReplicas >= 1` when `minReplicas > 0` | Scaling params | ACA API validation |
 | `containerCpu` must be valid ACA tier | CPU param | ACA API validation (0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 4) |
 | `secretEnvVars[*].secretRef` must be unique | Secret env vars | ACA API validation |
-| `tags` must include `Environment`, `Project`, `ManagedBy` | Tags | Convention (not enforced by template) |
+| `tags` must include `Environment`, `Project`, `ManagedBy` | Tags | Convention (not enforced by template). Consider adding a Bicep validation (`assert` or custom rule) or Azure Policy for stricter enforcement in a future enhancement. |
+| `maxReplicas` range validation | Scaling params | Intentionally deferred to ACA API — no Bicep-level enforcement. The API returns a clear error if values are out of range. |
 
 ---
 

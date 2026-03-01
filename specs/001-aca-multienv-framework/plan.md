@@ -34,10 +34,10 @@ Refactor the existing monolithic ACA Bicep template and GitHub Actions workflow 
 | V | GitHub Actions and CI/CD Strategy | ⚠️ REQUIRES CHANGE | Current workflow is dispatch-only; must convert to reusable `workflow_call` + add what-if abort + per-env triggers |
 | VI | App Lifecycle and Image Deployment | ✅ PASS | Placeholder image default; `containerImage` parameterized; `container-image-tag` override added to workflow |
 | VII | Security and Compliance Requirements | ✅ PASS | Identity-based ACR pull, KV secrets, TLS enforced, least-privilege RBAC, no stored secrets |
-| VIII | Observability and Operations | ✅ PASS | LAW per env with 30-day retention; health probes deferred until app images replace placeholders |
+| VIII | Observability and Operations | ⚠️ PARTIAL | LAW per env with 30-day retention; health probes deferred for placeholder images. **Alerts (scale failure, 5xx, restart loops) deferred to follow-up spec** — documented as non-goal in spec.md. |
 | IX | Reusability and Extension for Multiple Apps | ✅ PASS | Reusable workflow + Bicep modules; app repos provide inputs only |
 
-**Gate Result**: PASS (with 2 planned corrective actions for Principles III and V)
+**Gate Result**: PASS (with 2 planned corrective actions for Principles III and V, plus Principle VIII alerts deferred)
 
 ## Project Structure
 
@@ -112,10 +112,10 @@ infra/
 | V | GitHub Actions and CI/CD | ✅ PASS (resolved) | Reusable `workflow_call` contract defined in contracts/workflow-inputs.md. Dev auto-deploy, qa manual, prod approval. What-if with destructive abort. OIDC only. |
 | VI | App Lifecycle and Image Deployment | ✅ PASS | Placeholder image default. `container-image-tag` input in workflow contract. `Single` revision mode. |
 | VII | Security and Compliance | ✅ PASS | Identity-based ACR pull, KV secrets, `allowInsecure: false` hardcoded, RBAC least-privilege. `principalType: ServicePrincipal` per research R-001. |
-| VIII | Observability and Operations | ✅ PASS | LAW per env (30-day, PerGB2018). Health probes deferred for placeholder images (per constitution allowance). |
+| VIII | Observability and Operations | ⚠️ PARTIAL | LAW per env (30-day, PerGB2018). Health probes deferred for placeholder images. **Alerts deferred to follow-up spec** — documented in spec.md non-goals. |
 | IX | Reusability and Extension | ✅ PASS | Onboarding in <30 min per quickstart.md. Cross-repo caller pattern in contracts. `secrets: inherit` per research R-006. |
 
-**Gate Result**: ✅ ALL PASS — The 2 previous "REQUIRES CHANGE" items (Principles III and V) are now resolved by the Phase 1 design (modular Bicep + reusable workflow).
+**Gate Result**: ✅ ALL PASS (with noted deferral) — The 2 previous "REQUIRES CHANGE" items (Principles III and V) are resolved. Principle VIII alerts are explicitly deferred to a follow-up spec.
 
 ## Complexity Tracking
 

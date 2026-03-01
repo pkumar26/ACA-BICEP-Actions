@@ -27,7 +27,7 @@ This workflow is **only** callable via `workflow_call`. It does not have `push`,
 | `azure-subscription-id` | `string` | Yes | — | Azure subscription ID for the deployment target. |
 | `azure-resource-group` | `string` | Yes | — | Azure resource group name for the deployment target. |
 | `parameter-file` | `string` | Yes | — | Relative path to the Bicep parameter file (e.g., `infra/parameters.dev.bicepparam`). |
-| `container-image-tag` | `string` | No | `''` | Container image tag to override. When non-empty, passed as `--parameters containerImageTag='<value>'` to the Bicep deployment. When empty, the default from the parameter file applies. |
+| `container-image-tag` | `string` | No | `''` | Container image tag to override. When non-empty, the workflow constructs the full image reference as `${acrLoginServer}/${appName}:${tag}` and passes it as `--parameters containerImage='<value>'` to the Bicep deployment. When empty, the default `containerImage` from the parameter file applies. |
 | `allow-destructive` | `boolean` | No | `false` | When `true`, allows deployment to proceed even if what-if detects resource deletions. When `false` (default), the workflow auto-aborts on detected deletions. |
 
 ### Secrets
@@ -221,11 +221,14 @@ az deployment group create \
 
 **With image tag override** (when `container-image-tag` is non-empty):
 ```bash
+# Workflow constructs full image reference from deployment context:
+# ACR_LOGIN_SERVER derived from acrResourceId in Bicep outputs or parameter file
+# APP_NAME from the parameter file's appName value
 az deployment group create \
   --resource-group "$RESOURCE_GROUP" \
   --template-file infra/main.bicep \
   --parameters "$PARAMETER_FILE" \
-  --parameters containerImageTag='$IMAGE_TAG' \
+  --parameters containerImage='${ACR_LOGIN_SERVER}/${APP_NAME}:${IMAGE_TAG}' \
   --name "aca-infra-${ENVIRONMENT}-$(date +%Y%m%d%H%M%S)" \
   --mode Incremental
 ```

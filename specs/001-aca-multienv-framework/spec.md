@@ -24,6 +24,7 @@
 - Provisioning the ACR or Key Vault resources themselves — they are assumed to exist.
 - Providing application-level business logic, runtime frameworks, or language-specific build toolchains.
 - Implementing a full GitOps reconciliation loop; this framework is imperative (CI/CD pushes state to Azure).
+- Configuring Azure Monitor alerts (scale failure, HTTP 5xx, container restart loops). These are deferred to a follow-up spec per Constitution VIII allowance. The v1 framework creates the Log Analytics workspace foundation; alert rules will be added in a subsequent feature spec.
 
 ---
 
@@ -217,6 +218,9 @@ Each `parameters.{env}.bicepparam` controls:
 | Sizing | `containerCpu`, `containerMemory`, `minReplicas`, `maxReplicas` | Yes |
 | Image | `containerImage` | Yes (tag differs) |
 | Networking | `ingressExternal`, `targetPort` | May vary |
+
+> **Note**: `ingressExternal` defaults to `false` (private ingress). Set to `true` in the parameter file when external access is required and document the security rationale.
+
 | Configuration | `appEnvVars` (log level, feature flags, runtime settings) | Yes |
 | Secrets | `secretEnvVars` (Key Vault URIs per env) | Yes |
 | Tags | `tags` (Environment, Project, ManagedBy) | `Environment` tag varies |
@@ -317,7 +321,7 @@ App repositories call this workflow and supply their own inputs. The shared work
 ### What Each App Repo Must Provide
 
 - `appName`: Base name for resource naming.
-- `acrName`: Name of the existing ACR holding the app's images.
+- `acrResourceId`: Full ARM resource ID of the existing ACR (e.g., `/subscriptions/.../providers/Microsoft.ContainerRegistry/registries/demoacr`). Supports cross-resource-group scenarios.
 - `containerImage`: Full image reference (registry/repo:tag).
 - Per-environment parameter files with app-specific `appEnvVars`, `secretEnvVars`, sizing, and Key Vault URIs.
 - GitHub Environment secrets (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`) and variables (`AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`).
@@ -402,7 +406,7 @@ App repositories call this workflow and supply their own inputs. The shared work
 
 ### Measurable Outcomes
 
-- **SC-001**: A new application team can onboard to this framework and deploy a container app to `dev` within 30 minutes by providing only `appName`, `acrName`, `containerImage`, and per-environment parameter files.
+- **SC-001**: A new application team can onboard to this framework and deploy a container app to `dev` within 30 minutes by providing only `appName`, `acrResourceId`, `containerImage`, and per-environment parameter files.
 - **SC-002**: All three environments (`dev`, `qa`, `prod`) can be provisioned from scratch using the framework, each with correct naming, sizing, and identity bindings, in a single pipeline run per environment.
 - **SC-003**: 100% of secrets consumed by the container app are sourced from Key Vault; zero secrets appear in parameter files, workflow logs, or GitHub repository settings.
 - **SC-004**: Re-running any environment's deployment with unchanged parameters produces zero resource modifications (full idempotency).

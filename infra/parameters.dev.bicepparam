@@ -11,10 +11,16 @@ param location = 'westus2'
 // --- Identity: create a new one for dev ---
 param createNewIdentity = true
 // param existingIdentityResourceId = ''
+// To reuse an existing identity, set:
+//   param createNewIdentity = false
+//   param existingIdentityResourceId = '/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/my-existing-identity'
 
-// --- ACR ---
-param acrName = 'demoacr'
-// param acrResourceGroup = 'rg-demo-shared'  // uncomment if ACR is in a different RG
+// --- ACR (full ARM resource ID — supports cross-RG) ---
+param acrResourceId = '/subscriptions/<sub-id>/resourceGroups/<acr-rg>/providers/Microsoft.ContainerRegistry/registries/demoacr'
+
+// --- ACA Environment ---
+param existingManagedEnvironmentId = ''   // Leave empty to create a new environment
+param subnetId = ''                        // Leave empty for no VNET integration
 
 // --- Container App ---
 param containerImage = 'mcr.microsoft.com/k8se/quickstart:latest' // placeholder for initial deploy
@@ -32,6 +38,7 @@ param appEnvVars = [
   { name: 'FEATURE_FLAG_NEW_UI', value: 'true' }
 ]
 
+// --- Secrets (Key Vault references — uncomment/edit when KV secrets are ready) ---
 param secretEnvVars = [
   {
     name: 'DB_CONNECTION'

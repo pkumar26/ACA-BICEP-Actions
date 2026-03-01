@@ -178,3 +178,11 @@ To deploy into a pre-existing managed environment:
 
 1. Set `existingManagedEnvironmentId` to the full ARM resource ID of the existing environment.
 2. Deploy — the framework skips environment creation and deploys the container app into the existing one.
+
+### Configure Health Probes
+
+After replacing the placeholder image with your real application image, configure liveness and readiness probes:
+
+1. Add `livenessProbe` and `readinessProbe` to your container app's template in the Bicep parameter file or module.
+2. Example: `{ type: 'HTTP', httpGet: { path: '/healthz', port: 80 }, initialDelaySeconds: 5, periodSeconds: 10 }`.
+3. This ensures ACA can detect unhealthy containers and restart them automatically.

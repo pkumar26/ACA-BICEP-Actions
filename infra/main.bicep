@@ -1,8 +1,14 @@
 // ============================================================================
-// ACA Infrastructure - Multi-Environment Deployment
+// ACA Infrastructure — Multi-Environment Orchestrator
 // ============================================================================
-// Provisions: User-Assigned Identity (optional), ACRPull role, Log Analytics,
-//             Managed Environment, and Container App with env vars + secrets.
+// Wires 5 Bicep modules in dependency order:
+//   1. identity.bicep          — conditional UAMI creation
+//   2. acr-role-assignment.bicep — AcrPull on ACR (cross-RG capable)
+//   3. log-analytics.bicep     — Log Analytics workspace
+//   4. managed-environment.bicep — ACA environment (conditional + VNET)
+//   5. container-app.bicep     — Container app with secrets, scaling, ingress
+//
+// See: specs/001-aca-multienv-framework/data-model.md §3
 // ============================================================================
 
 targetScope = 'resourceGroup'
@@ -31,12 +37,16 @@ param existingIdentityResourceId string = ''
 
 // --- ACR ---
 
-@description('Name of the existing Azure Container Registry (without .azurecr.io).')
-param acrName string
+@description('Full ARM resource ID of the existing Azure Container Registry. Supports cross-resource-group ACR.')
+param acrResourceId string
 
-// NOTE: If the ACR is in a different resource group, extract the role
-// assignment into a Bicep module deployed at that resource group scope.
-// This template assumes the ACR lives in the same resource group.
+// --- ACA Environment ---
+
+@description('Optional: Resource ID of an existing ACA managed environment. Empty = create new.')
+param existingManagedEnvironmentId string = ''
+
+@description('Optional: Subnet resource ID for VNET integration. Empty = no VNET.')
+param subnetId string = ''
 
 // --- Container App ---
 
@@ -59,17 +69,15 @@ param minReplicas int = 0
 param maxReplicas int = 3
 
 @description('Whether the container app exposes an external HTTP endpoint.')
-param ingressExternal bool = true
+param ingressExternal bool = false
 
 // --- Environment Variables ---
 
 @description('Non-sensitive environment variables for the container.')
 param appEnvVars array = []
-// Example: [ { name: 'LOG_LEVEL', value: 'Debug' } ]
 
 @description('Secret environment variables sourced from Key Vault.')
 param secretEnvVars array = []
-// Example: [ { name: 'DB_CONNECTION', secretRef: 'db-connection', keyVaultSecretUri: 'https://kv.vault.azure.net/secrets/db-connection' } ]
 
 // --- Tags ---
 
@@ -81,152 +89,108 @@ param tags object = {}
 // ---------------------------------------------------------------------------
 
 var resourceSuffix = '${appName}-${environmentName}'
-var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 
-// Build secrets array for the container app (Key Vault references)
-var containerAppSecrets = [
-  for secret in secretEnvVars: {
-    name: secret.secretRef
-    keyVaultUrl: secret.keyVaultSecretUri
-    identity: identityResourceId
-  }
-]
+// Derive ACR name and resource group from the full resource ID
+var acrResourceGroup = split(acrResourceId, '/')[4]
+var acrName = last(split(acrResourceId, '/'))
+var acrLoginServer = '${acrName}.azurecr.io'
 
-// Build env var mappings for secrets (extracted to avoid BCP138 in concat)
-var secretEnvVarMappings = [
-  for secret in secretEnvVars: {
-    name: secret.name
-    secretRef: secret.secretRef
-  }
-]
-
-// Merge plain env vars + secret-referenced env vars
-var containerEnvVars = concat(appEnvVars, secretEnvVarMappings)
+// Conditional: create a new ACA environment or use existing
+var createNewEnvironment = empty(existingManagedEnvironmentId)
 
 // ---------------------------------------------------------------------------
 // 1. User-Assigned Managed Identity (conditional)
 // ---------------------------------------------------------------------------
 
-resource newIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (createNewIdentity) {
-  name: 'id-${resourceSuffix}'
-  location: location
-  tags: tags
-}
-
-// Reference existing identity when not creating a new one
-resource existingIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = if (!createNewIdentity) {
-  name: last(split(existingIdentityResourceId, '/'))!
-}
-
-// Resolved identity values used by downstream resources
-var identityResourceId = createNewIdentity ? newIdentity.id : existingIdentityResourceId
-var identityPrincipalId = createNewIdentity ? newIdentity.properties.principalId : existingIdentity!.properties.principalId
-
-// ---------------------------------------------------------------------------
-// 2. ACRPull Role Assignment on existing ACR
-// ---------------------------------------------------------------------------
-
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: acrName
-}
-
-resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, identityResourceId, acrPullRoleId)
-  scope: acr
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleId)
-    principalId: identityPrincipalId
-    principalType: 'ServicePrincipal'
+module identity './modules/identity.bicep' = {
+  name: 'identity-${resourceSuffix}'
+  params: {
+    resourceSuffix: resourceSuffix
+    location: location
+    tags: tags
+    createNewIdentity: createNewIdentity
+    existingIdentityResourceId: existingIdentityResourceId
   }
 }
 
 // ---------------------------------------------------------------------------
-// 3. Log Analytics Workspace
+// 2. ACRPull Role Assignment (cross-RG capable)
 // ---------------------------------------------------------------------------
 
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+module acrRoleAssignment './modules/acr-role-assignment.bicep' = {
+  name: 'acr-role-${resourceSuffix}'
+  scope: resourceGroup(acrResourceGroup)
+  params: {
+    acrName: acrName
+    principalId: identity.outputs.identityPrincipalId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Log Analytics Workspace (always runs)
+// ---------------------------------------------------------------------------
+
+module logAnalytics './modules/log-analytics.bicep' = {
   name: 'law-${resourceSuffix}'
-  location: location
-  tags: tags
-  properties: {
-    sku: {
-      name: 'PerGB2018'
-    }
-    retentionInDays: 30
+  params: {
+    resourceSuffix: resourceSuffix
+    location: location
+    tags: tags
   }
 }
 
 // ---------------------------------------------------------------------------
-// 4. Container Apps Managed Environment
+// 4. Container Apps Managed Environment (conditional)
 // ---------------------------------------------------------------------------
 
-resource managedEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
+module managedEnv './modules/managed-environment.bicep' = if (createNewEnvironment) {
   name: 'cae-${resourceSuffix}'
-  location: location
-  tags: tags
-  properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: logAnalytics.properties.customerId
-        sharedKey: logAnalytics.listKeys().primarySharedKey
-      }
-    }
+  params: {
+    resourceSuffix: resourceSuffix
+    location: location
+    tags: tags
+    logAnalyticsCustomerId: logAnalytics.outputs.customerId
+    logAnalyticsPrimarySharedKey: logAnalytics.outputs.primarySharedKey
+    subnetId: subnetId
   }
 }
+
+// Resolve environment ID: new module output or existing external ID
+var resolvedEnvironmentId = createNewEnvironment
+  ? managedEnv.outputs.environmentId
+  : existingManagedEnvironmentId
+
+// Resolve environment name for output
+var resolvedEnvironmentName = createNewEnvironment
+  ? managedEnv.outputs.environmentName
+  : last(split(existingManagedEnvironmentId, '/'))
 
 // ---------------------------------------------------------------------------
 // 5. Container App
 // ---------------------------------------------------------------------------
 
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+module containerApp './modules/container-app.bicep' = {
   name: 'ca-${resourceSuffix}'
-  location: location
-  tags: tags
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${identityResourceId}': {}
-    }
-  }
-  properties: {
-    managedEnvironmentId: managedEnv.id
-    configuration: {
-      activeRevisionsMode: 'Single'
-      ingress: {
-        external: ingressExternal
-        targetPort: targetPort
-        transport: 'auto'
-        allowInsecure: false
-      }
-      registries: [
-        {
-          server: '${acrName}.azurecr.io'
-          identity: identityResourceId
-        }
-      ]
-      secrets: containerAppSecrets
-    }
-    template: {
-      containers: [
-        {
-          name: appName
-          image: containerImage
-          resources: {
-            cpu: json(containerCpu)
-            memory: containerMemory
-          }
-          env: containerEnvVars
-        }
-      ]
-      scale: {
-        minReplicas: minReplicas
-        maxReplicas: maxReplicas
-      }
-    }
+  params: {
+    resourceSuffix: resourceSuffix
+    appName: appName
+    location: location
+    tags: tags
+    managedEnvironmentId: resolvedEnvironmentId
+    identityResourceId: identity.outputs.identityResourceId
+    acrLoginServer: acrLoginServer
+    containerImage: containerImage
+    targetPort: targetPort
+    containerCpu: containerCpu
+    containerMemory: containerMemory
+    minReplicas: minReplicas
+    maxReplicas: maxReplicas
+    ingressExternal: ingressExternal
+    appEnvVars: appEnvVars
+    secretEnvVars: secretEnvVars
   }
   dependsOn: [
-    acrPullRoleAssignment
+    acrRoleAssignment
   ]
 }
 
@@ -235,16 +199,16 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 // ---------------------------------------------------------------------------
 
 @description('The name of the Container App.')
-output containerAppName string = containerApp.name
+output containerAppName string = containerApp.outputs.containerAppName
 
 @description('The FQDN of the Container App.')
-output containerAppFqdn string = containerApp.properties.configuration.ingress.fqdn
+output containerAppFqdn string = containerApp.outputs.containerAppFqdn
 
 @description('The resource ID of the Container App.')
-output containerAppResourceId string = containerApp.id
+output containerAppResourceId string = containerApp.outputs.containerAppResourceId
 
 @description('The resource ID of the managed identity used by the Container App.')
-output identityResourceId string = identityResourceId
+output identityResourceId string = identity.outputs.identityResourceId
 
 @description('The name of the Container Apps Managed Environment.')
-output managedEnvironmentName string = managedEnv.name
+output managedEnvironmentName string = resolvedEnvironmentName
