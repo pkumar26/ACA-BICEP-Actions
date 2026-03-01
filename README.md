@@ -1,25 +1,72 @@
 # Azure Container App — Multi-Environment Infrastructure
 
-Bicep + GitHub Actions templates to provision an Azure Container App with:
+Bicep + GitHub Actions framework to provision Azure Container Apps with:
 
-- **Multi-environment** support (dev / qa / prod)
+- **Multi-environment** support (dev / qa / prod) with per-environment sizing and secrets
+- **Modular Bicep** — 5 reusable modules orchestrated by `main.bicep`
 - **User-assigned managed identity** (create new or bring your own)
-- **ACRPull role assignment** on an existing Azure Container Registry
-- **Key Vault–backed secrets** accessed at runtime by the container app
-- **Per-environment configuration** via `.bicepparam` parameter files
-- **OIDC / Workload Identity Federation** for passwordless GitHub → Azure auth
+- **Cross-resource-group ACR** — AcrPull role assignment via full ARM resource ID
+- **Key Vault–backed secrets** accessed at runtime via managed identity
+- **Reusable GitHub Actions workflow** — `workflow_call` pattern with thin per-env callers
+- **Destructive change protection** — what-if preview auto-aborts on detected deletions
+- **OIDC / Workload Identity Federation** — passwordless GitHub → Azure auth (no stored secrets)
+- **Optional VNET integration** and existing managed environment reuse
+
+## Architecture
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│ deploy-dev   │     │ deploy-qa    │     │ deploy-prod  │
+│ (push→main)  │     │ (manual)     │     │ (manual+     │
+│              │     │              │     │  approval)   │
+└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
+       │                    │                    │
+       └────────────────────┼────────────────────┘
+                            ▼
+                ┌───────────────────────┐
+                │   infra-deploy.yml    │
+                │   (reusable workflow) │
+                │                       │
+                │  1. OIDC Login        │
+                │  2. What-If Preview   │
+                │  3. Destructive Gate  │
+                │  4. Bicep Deploy      │
+                │  5. Output Capture    │
+                └───────────┬───────────┘
+                            ▼
+                ┌───────────────────────┐
+                │    main.bicep         │
+                │    (orchestrator)     │
+                │                       │
+                │  ┌─ identity.bicep    │
+                │  ├─ acr-role-assign.  │
+                │  ├─ log-analytics.    │
+                │  ├─ managed-env.      │
+                │  └─ container-app.    │
+                └───────────────────────┘
+```
 
 ## Repository Structure
 
 ```
 ├── infra/
-│   ├── main.bicep                    # Main Bicep template (all resources)
+│   ├── main.bicep                    # Orchestrator — wires all modules
+│   ├── modules/
+│   │   ├── identity.bicep            # Conditional UAMI creation
+│   │   ├── acr-role-assignment.bicep # AcrPull role (cross-RG capable)
+│   │   ├── log-analytics.bicep       # Log Analytics workspace
+│   │   ├── managed-environment.bicep # ACA environment (optional VNET)
+│   │   └── container-app.bicep       # Container app with KV secrets
 │   ├── parameters.dev.bicepparam     # Dev overrides
 │   ├── parameters.qa.bicepparam      # QA overrides
 │   └── parameters.prod.bicepparam    # Prod overrides
 ├── .github/
 │   └── workflows/
-│       └── infra-deploy.yml          # GitHub Actions deployment workflow
+│       ├── infra-deploy.yml          # Reusable deployment workflow
+│       ├── deploy-dev.yml            # Dev caller (push trigger)
+│       ├── deploy-qa.yml             # QA caller (manual)
+│       └── deploy-prod.yml           # Prod caller (manual + approval)
+├── USAGE_MODELS.md                   # Multi-app consumption guide
 └── README.md
 ```
 
@@ -28,16 +75,17 @@ Bicep + GitHub Actions templates to provision an Azure Container App with:
 | Resource | Naming Convention | Notes |
 |----------|-------------------|-------|
 | User-Assigned Managed Identity | `id-{appName}-{env}` | Conditional — skipped if using an existing identity |
-| ACRPull Role Assignment | — | Scoped to the existing ACR |
+| ACRPull Role Assignment | deterministic `guid()` | Scoped to ACR (supports cross-RG) |
 | Log Analytics Workspace | `law-{appName}-{env}` | 30-day retention, PerGB2018 SKU |
-| Container Apps Managed Environment | `cae-{appName}-{env}` | Wired to Log Analytics |
-| Container App | `ca-{appName}-{env}` | Identity-based ACR pull, Key Vault secrets |
+| Container Apps Managed Environment | `cae-{appName}-{env}` | Conditional — skipped if reusing existing; optional VNET |
+| Container App | `ca-{appName}-{env}` | Identity-based ACR pull, Key Vault secrets, `allowInsecure: false` |
 
 ## Prerequisites
 
 - **Azure CLI** with the Bicep extension (`az bicep install`)
-- **An existing Azure Container Registry** in the same resource group
+- **An existing Azure Container Registry** (can be in any resource group)
 - **An existing Azure Key Vault** per environment (for secret env vars)
+- **Key Vault Secrets User** role granted to the managed identity (external prerequisite)
 - **A GitHub repository** with Environments configured (see [Setup](#3-configure-github-environments))
 
 ---
@@ -58,9 +106,9 @@ Edit each `infra/parameters.{env}.bicepparam` file to match your environment. At
 | Parameter | Description | Example |
 |-----------|-------------|---------|
 | `appName` | Base name for all resources | `aca-myapp` |
-| `acrName` | Name of your existing ACR (no hyphens) | `myappacr` |
+| `acrResourceId` | Full ARM resource ID of your existing ACR | `/subscriptions/.../registries/myacr` |
 | `location` | Azure region | `eastus` |
-| `containerImage` | Image to deploy (placeholder is fine for first run) | `myappacr.azurecr.io/api:v1` |
+| `containerImage` | Image to deploy (placeholder is fine for first run) | `myacr.azurecr.io/api:v1` |
 | `targetPort` | Port your container listens on | `8080` |
 | `appEnvVars` | Non-sensitive env vars | See parameter file for format |
 | `secretEnvVars` | Key Vault–backed secret env vars | See parameter file for format |
@@ -73,6 +121,22 @@ Set these parameters in the `.bicepparam` file:
 param createNewIdentity = false
 param existingIdentityResourceId = '/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<name>'
 ```
+
+#### Using an existing ACA managed environment
+
+```bicep
+param existingManagedEnvironmentId = '/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/managedEnvironments/<name>'
+```
+
+When set, the framework skips environment creation and deploys the container app into the existing environment.
+
+#### Enabling VNET integration
+
+```bicep
+param subnetId = '/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>'
+```
+
+The subnet must be delegated to `Microsoft.App/environments` (external prerequisite).
 
 #### Environment variable format
 
@@ -161,11 +225,17 @@ az role assignment create \
 
 ### Via GitHub Actions (recommended)
 
-**Automatic:** Push changes to the `infra/` folder on `main` → deploys to **dev** automatically.
+| Environment | Trigger | How |
+|-------------|---------|-----|
+| **dev** | Automatic on push to `main` (changes in `infra/`) | Merge a PR |
+| **qa** | Manual | Actions → Deploy QA → Run workflow |
+| **prod** | Manual + approval | Actions → Deploy Prod → Run workflow (reviewer must approve) |
 
-**Manual:** Go to **Actions → Deploy ACA Infrastructure → Run workflow** and select the target environment.
+The reusable workflow runs a **what-if preview** before deploying. If resource **deletions** are detected, the deployment **auto-aborts** unless `allow-destructive` is set to `true`.
 
-The workflow runs a **what-if** preview before deploying, so you can inspect changes in the Actions log.
+#### Overriding the container image tag
+
+When triggering QA or Prod deployments manually, you can provide a `container-image-tag` input. The workflow constructs the full image reference and passes it as a Bicep parameter override.
 
 ### Via Azure CLI (local)
 
@@ -187,8 +257,83 @@ az deployment group create \
   --resource-group rg-myapp-dev \
   --template-file infra/main.bicep \
   --parameters infra/parameters.dev.bicepparam \
-  --name "aca-infra-dev-$(date +%Y%m%d%H%M)"
+  --name "aca-infra-dev-$(date +%Y%m%d%H%M)" \
+  --mode Incremental
 ```
+
+---
+
+## Reusable Workflow — Cross-Repo Consumption
+
+> **Managing multiple apps?** See [USAGE_MODELS.md](USAGE_MODELS.md) for a detailed guide on centralized vs. fork-based consumption patterns, including directory structures, example workflows, and a comparison table.
+
+Other application repos can call the reusable workflow without duplicating deployment logic:
+
+```yaml
+name: Deploy to ACA
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [dev, qa, prod]
+      image-tag:
+        required: true
+
+jobs:
+  deploy:
+    uses: <owner>/<framework-repo>/.github/workflows/infra-deploy.yml@main
+    with:
+      environment: ${{ inputs.environment }}
+      azure-subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      azure-resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+      parameter-file: infra/parameters.${{ inputs.environment }}.bicepparam
+      container-image-tag: ${{ inputs.image-tag }}
+    secrets: inherit
+```
+
+### Workflow Inputs
+
+| Input | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `environment` | `string` | Yes | — | Target environment (`dev`, `qa`, `prod`) |
+| `azure-subscription-id` | `string` | Yes | — | Azure subscription ID |
+| `azure-resource-group` | `string` | Yes | — | Target resource group |
+| `parameter-file` | `string` | Yes | — | Path to `.bicepparam` file |
+| `container-image-tag` | `string` | No | `''` | Image tag override |
+| `allow-destructive` | `boolean` | No | `false` | Allow destructive changes |
+
+### Workflow Outputs
+
+| Output | Type | Description |
+|--------|------|-------------|
+| `container-app-name` | `string` | Deployed container app name |
+| `container-app-fqdn` | `string` | Container app FQDN |
+| `container-app-resource-id` | `string` | Full ARM resource ID |
+
+---
+
+## Recovery from Partial Failures
+
+This framework uses a **fix-forward** approach. Bicep deployments in `Incremental` mode are idempotent — re-running after a failure converges to the desired state.
+
+### Procedure
+
+1. **Diagnose**: Check the GitHub Actions log for the specific error (ARM error code, resource that failed).
+2. **Fix root cause**: Correct the parameter file, Bicep code, or external prerequisite (e.g., Key Vault access, subnet delegation).
+3. **Re-run the workflow**: The same caller workflow will re-run the full deployment. Already-provisioned resources are left unchanged; only the failed/changed resources are updated.
+
+### Common Failure Scenarios
+
+| Scenario | Root Cause | Fix |
+|----------|-----------|-----|
+| ACRPull role fails | Insufficient permissions on ACR RG | Grant `User Access Administrator` on ACR resource group |
+| Key Vault secret fails | Missing `Key Vault Secrets User` role | Assign the role to the managed identity on the Key Vault |
+| VNET integration fails | Subnet not delegated | Delegate subnet to `Microsoft.App/environments` |
+| What-if abort | Detected resource deletions | Review changes; re-run with `allow-destructive: true` if intended |
+| Image pull fails | Wrong ACR resource ID or image not pushed | Verify `acrResourceId` and push image before deploying |
+
+> **Note**: Rollback is not supported. Always fix forward by correcting the root cause and re-deploying.
 
 ---
 
@@ -201,14 +346,16 @@ az deployment group create \
 | `location` | `string` | Resource group location | Azure region |
 | `createNewIdentity` | `bool` | `true` | Create a new managed identity or use existing |
 | `existingIdentityResourceId` | `string` | `''` | Full resource ID of an existing identity |
-| `acrName` | `string` | — | Existing ACR name (no `.azurecr.io`) |
+| `acrResourceId` | `string` | — | Full ARM resource ID of the existing ACR |
+| `existingManagedEnvironmentId` | `string` | `''` | Full resource ID of existing ACA environment (empty = create new) |
+| `subnetId` | `string` | `''` | Subnet resource ID for VNET integration (empty = no VNET) |
 | `containerImage` | `string` | `mcr.microsoft.com/k8se/quickstart:latest` | Container image to deploy |
 | `targetPort` | `int` | `80` | Port the container listens on |
 | `containerCpu` | `string` | `0.5` | CPU cores |
 | `containerMemory` | `string` | `1Gi` | Memory |
 | `minReplicas` | `int` | `0` | Minimum replica count |
 | `maxReplicas` | `int` | `3` | Maximum replica count |
-| `ingressExternal` | `bool` | `true` | Expose external HTTP endpoint |
+| `ingressExternal` | `bool` | `false` | Expose external HTTP endpoint |
 | `appEnvVars` | `array` | `[]` | Non-sensitive env vars (`{ name, value }`) |
 | `secretEnvVars` | `array` | `[]` | Key Vault secret refs (`{ name, secretRef, keyVaultSecretUri }`) |
 | `tags` | `object` | `{}` | Tags applied to all resources |
@@ -225,9 +372,17 @@ az deployment group create \
 
 ---
 
-## Outputs
+## Bicep Module Reference
 
-The Bicep template emits these outputs (also surfaced as GitHub Actions step outputs):
+| Module | Purpose | Key Inputs | Key Outputs |
+|--------|---------|------------|-------------|
+| `identity.bicep` | Conditional UAMI creation | `createNewIdentity`, `existingIdentityResourceId` | `identityResourceId`, `identityPrincipalId` |
+| `acr-role-assignment.bicep` | AcrPull role on ACR | `acrName`, `principalId` | — |
+| `log-analytics.bicep` | Log Analytics workspace | `resourceSuffix`, `location` | `workspaceId`, `customerId`, `primarySharedKey` |
+| `managed-environment.bicep` | ACA environment + VNET | `subnetId`, LAW outputs | `environmentId`, `environmentName` |
+| `container-app.bicep` | Container app | identity, ACR, env vars, scaling | `containerAppName`, `containerAppFqdn`, `containerAppResourceId` |
+
+## Deployment Outputs
 
 | Output | Description |
 |--------|-------------|
@@ -237,11 +392,11 @@ The Bicep template emits these outputs (also surfaced as GitHub Actions step out
 | `identityResourceId` | Resource ID of the managed identity |
 | `managedEnvironmentName` | Name of the Container Apps Managed Environment |
 
-## Notes
+## Known Limitations
 
-- **ACR must be in the same resource group** as the Container App. If your ACR is in a different resource group, extract the role assignment into a separate Bicep module scoped to that resource group.
-- The template uses a **placeholder container image** (`mcr.microsoft.com/k8se/quickstart:latest`) for the initial infrastructure deploy. Update `containerImage` in the parameter file (or via a separate app-deploy workflow) once your image is pushed to ACR.
-- **BCP318 warning** during `az bicep build` is expected — it flags that a conditional resource _could_ be null. At runtime the ternary expression guarantees the correct branch is evaluated.
+- **Sovereign clouds**: `acrLoginServer` is derived as `${acrName}.azurecr.io`, which assumes Azure public cloud. Sovereign cloud ACR suffixes (e.g., `.azurecr.cn`) are not currently supported.
+- **Health probes**: Not configured by default. Add liveness/readiness probes to `container-app.bicep` for production workloads.
+- **`maxReplicas` validation**: Deferred — review Azure Container Apps scaling limits before setting values > 30.
 
 ## License
 

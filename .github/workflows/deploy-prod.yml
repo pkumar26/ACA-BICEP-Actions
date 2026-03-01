@@ -1,0 +1,34 @@
+# =============================================================================
+# Deploy Prod — Caller Workflow
+# =============================================================================
+# Manual deployment to prod. Requires a container image tag.
+# The prod GitHub Environment MUST have required reviewers configured
+# to enforce manual approval before deployment proceeds.
+# Calls the reusable infra-deploy.yml workflow.
+# =============================================================================
+
+name: Deploy Prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      container-image-tag:
+        description: 'Container image tag to deploy'
+        required: true
+      allow-destructive:
+        description: 'Allow destructive changes'
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/infra-deploy.yml
+    with:
+      environment: prod
+      azure-subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      azure-resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+      parameter-file: infra/parameters.prod.bicepparam
+      container-image-tag: ${{ inputs.container-image-tag }}
+      allow-destructive: ${{ inputs.allow-destructive }}
+    secrets: inherit
+    # Prod environment protection rules enforce manual approval

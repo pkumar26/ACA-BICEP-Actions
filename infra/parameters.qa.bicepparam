@@ -12,9 +12,14 @@ param location = 'westus2'
 param createNewIdentity = true
 // param existingIdentityResourceId = ''
 
-// --- ACR ---
-param acrName = 'demoacr'
-// param acrResourceGroup = 'rg-demo-shared'  // uncomment if ACR is in a different RG
+// --- ACR (full ARM resource ID — supports cross-resource-group ACR) ---
+param acrResourceId = '/subscriptions/<sub-id>/resourceGroups/<acr-rg>/providers/Microsoft.ContainerRegistry/registries/demoacr'
+
+// --- ACA Environment (leave empty to create new; set to existing ID to reuse) ---
+param existingManagedEnvironmentId = ''
+
+// --- VNET (leave empty for no VNET integration) ---
+param subnetId = ''
 
 // --- Container App ---
 param containerImage = 'mcr.microsoft.com/k8se/quickstart:latest' // placeholder for initial deploy

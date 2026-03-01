@@ -1,0 +1,33 @@
+# =============================================================================
+# Deploy QA — Caller Workflow
+# =============================================================================
+# Manual deployment to QA. Supports optional container image tag override
+# and destructive change authorization.
+# Calls the reusable infra-deploy.yml workflow.
+# =============================================================================
+
+name: Deploy QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      container-image-tag:
+        description: 'Container image tag to deploy'
+        required: false
+        default: ''
+      allow-destructive:
+        description: 'Allow destructive changes'
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/infra-deploy.yml
+    with:
+      environment: qa
+      azure-subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      azure-resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+      parameter-file: infra/parameters.qa.bicepparam
+      container-image-tag: ${{ inputs.container-image-tag }}
+      allow-destructive: ${{ inputs.allow-destructive }}
+    secrets: inherit
