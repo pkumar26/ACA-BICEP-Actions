@@ -1,5 +1,17 @@
 # Azure Container App — Multi-Environment Infrastructure
 
+[![License](https://img.shields.io/github/license/pkumar26/ACA-BICEP-Actions)](LICENSE)
+[![Azure](https://img.shields.io/badge/Azure-Container%20Apps-0078D4?logo=microsoftazure)](https://learn.microsoft.com/en-us/azure/container-apps/)
+[![Bicep](https://img.shields.io/badge/Bicep-IaC-0078D4?logo=microsoftazure)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/)
+[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)](https://docs.github.com/en/actions)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](https://github.com/pkumar26/ACA-BICEP-Actions/pulls)
+
+![GitHub Stars](https://img.shields.io/github/stars/pkumar26/ACA-BICEP-Actions?style=social)
+![GitHub Forks](https://img.shields.io/github/forks/pkumar26/ACA-BICEP-Actions?style=social)
+[![GitHub Issues](https://img.shields.io/github/issues/pkumar26/ACA-BICEP-Actions)](https://github.com/pkumar26/ACA-BICEP-Actions/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/pkumar26/ACA-BICEP-Actions)](https://github.com/pkumar26/ACA-BICEP-Actions/commits/main)
+![Repo Size](https://img.shields.io/github/repo-size/pkumar26/ACA-BICEP-Actions)
+
 Bicep + GitHub Actions framework to provision Azure Container Apps with:
 
 - **Multi-environment** support (dev / qa / prod) with per-environment sizing and secrets
@@ -82,6 +94,10 @@ Bicep + GitHub Actions framework to provision Azure Container Apps with:
 
 ## Prerequisites
 
+![Azure CLI](https://img.shields.io/badge/Azure%20CLI-required-0078D4?logo=microsoftazure)
+![Bicep](https://img.shields.io/badge/Bicep-extension-0078D4?logo=microsoftazure)
+![GitHub](https://img.shields.io/badge/GitHub-Environments-181717?logo=github)
+
 - **Azure CLI** with the Bicep extension (`az bicep install`)
 - **An existing Azure Container Registry** (can be in any resource group)
 - **An existing Azure Key Vault** per environment (for secret env vars)
@@ -91,6 +107,9 @@ Bicep + GitHub Actions framework to provision Azure Container Apps with:
 ---
 
 ## Setup
+
+![Shell Script](https://img.shields.io/badge/Shell-Script-4EAA25?logo=gnubash&logoColor=white)
+![Azure CLI](https://img.shields.io/badge/Azure%20CLI-2.x-0078D4?logo=microsoftazure)
 
 ### 1. Fork / Clone
 
@@ -174,6 +193,9 @@ For each environment, add:
 
 ### 4. Set Up Workload Identity Federation (OIDC)
 
+![OIDC](https://img.shields.io/badge/OIDC-Workload%20Identity-0078D4?logo=microsoftazure)
+![Security](https://img.shields.io/badge/Security-Passwordless-green?logo=shieldsdotio)
+
 This eliminates the need for long-lived secrets in GitHub.
 
 1. **Create an App Registration** in Entra ID (or reuse an existing one).
@@ -223,6 +245,9 @@ az role assignment create \
 
 ## Deploying
 
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)
+![Azure CLI](https://img.shields.io/badge/Azure%20CLI-local-0078D4?logo=microsoftazure)
+
 ### Via GitHub Actions (recommended)
 
 | Environment | Trigger | How |
@@ -264,6 +289,9 @@ az deployment group create \
 ---
 
 ## Reusable Workflow — Cross-Repo Consumption
+
+![GitHub Actions](https://img.shields.io/badge/workflow__call-reusable-2088FF?logo=githubactions&logoColor=white)
+![YAML](https://img.shields.io/badge/YAML-workflow-CB171E?logo=yaml)
 
 > **Managing multiple apps?** See [USAGE_MODELS.md](USAGE_MODELS.md) for a detailed guide on centralized vs. fork-based consumption patterns, including directory structures, example workflows, and a comparison table.
 
