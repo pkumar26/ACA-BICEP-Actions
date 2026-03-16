@@ -1,5 +1,9 @@
 # Usage Models — Multi-App Consumption Guide
 
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)
+![Bicep](https://img.shields.io/badge/Bicep-IaC-0078D4?logo=microsoftazure)
+![Azure](https://img.shields.io/badge/Azure-Container%20Apps-0078D4?logo=microsoftazure)
+
 This document explains how teams with multiple application repositories (e.g., App1, App2, App3) can consume the ACA-BICEP-Actions framework.
 
 Two models are supported:
@@ -12,6 +16,9 @@ Two models are supported:
 ---
 
 ## Model A — Centralized Framework Repo (Recommended)
+
+![GitHub Actions](https://img.shields.io/badge/workflow__call-reusable-2088FF?logo=githubactions&logoColor=white)
+![YAML](https://img.shields.io/badge/YAML-workflow-CB171E?logo=yaml)
 
 This repo (`ACA-BICEP-Actions`) acts as a **shared infrastructure framework**. Each application repository contains only:
 
@@ -114,6 +121,9 @@ Replace `<owner>/ACA-BICEP-Actions` with the actual org/owner and repo name (e.g
 ---
 
 ## Model B — Fork / Self-Contained
+
+![Bicep](https://img.shields.io/badge/Bicep-full%20copy-0078D4?logo=microsoftazure)
+![GitHub](https://img.shields.io/badge/GitHub-fork-181717?logo=github)
 
 Each application repository contains a **full copy** of the framework. This is a fork of `ACA-BICEP-Actions` merged into the app repo.
 
@@ -219,6 +229,9 @@ jobs:
 ---
 
 ## Getting Started
+
+![Shell Script](https://img.shields.io/badge/Shell-Script-4EAA25?logo=gnubash&logoColor=white)
+![Azure CLI](https://img.shields.io/badge/Azure%20CLI-2.x-0078D4?logo=microsoftazure)
 
 ### Model A Setup (per app repo)
 
